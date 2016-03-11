@@ -34,8 +34,8 @@ function extract_test_case
     local rpm_workspace="${DirsName}/testrpmwork/unit-case"
 
     #Create new rpm workspace if it is not exist
-    ! [ -d "${rpm_workspace}" ] && mkdir -p "${rpm_workspace}" || rm -rf "${rpm_workspace}"/*
-    ! [ -d "${tzipworkdir}" ] && mkdir -p "${tzipworkdir}" || rm -rf "${tzipworkdir}"/*
+    ! [ -d "${rpm_workspace}" ] && mkdir -p "${rpm_workspace}" 
+    ! [ -d "${tzipworkdir}" ] && mkdir -p "${tzipworkdir}" 
 
     #Get all test rpm from folder
     local filelist=`ls "$local_folder"/*-tests-[0-9]*.armv7tnhl.rpm`

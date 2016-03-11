@@ -1,0 +1,346 @@
+#!/bin/bash
+
+function InitializeGlobalVariables
+{
+    SYS_APP_UID_MIN=20002
+    SYS_APP_UID_MAX=30000
+    USR_APP_UID_MIN=40001
+    USR_APP_UID_MAX=65535
+    SQLITES3_USR_DB="/data/install/policy_governor/policy-governor.db"
+    SQLITES3_PER_DB="/data/systemservice/permadmin/local_permission.db"
+    WHERE_FIND_CORE="/data/home/user/coredump"
+    
+    # 下面两个组做修改需要改脚本中使用的地方
+    User_Tpye_Array=( 'sysapp'                     'userapp'                    'root' 'system' 'developer' )
+    User_Name_Array=( 'syberos.ceshi.unittest.sys' 'syberos.ceshi.unittest.usr' 'root' 'system' 'developer' )
+    
+    return 0
+}
+
+############################################################
+##### case_result_root_dir
+############################################################
+function PutUserNamePermissionIndex
+{
+    local ArrayIndex=${#User_Tpye_Array[@]}
+    rm -rf "$1/usertypemap.txt"
+    for ((i = 0; i < ${ArrayIndex}; ++i))
+    do
+        echo "${i}|${User_Tpye_Array[${i}]}" >> "$1/usertypemap.txt"
+    done
+
+    /usr/bin/sqlite3 "${SQLITES3_PER_DB}" 'SELECT PERM_INDEX, NAME FROM PMS_GLOBAL ORDER by PERM_INDEX;' > "$1/permissionmap.txt"
+    [ 0 != $? ] && echo "Error: !!! sqlite3 error !!!" >&2 && exit 66
+
+    return 0
+}
+
+############################################################
+##### user
+############################################################
+function PutUserNameIndex
+{
+    for ((i = 0; i < ${#User_Name_Array[@]}; ++i))
+    do
+        [ "${User_Name_Array[${i}]}" == "$1" ] && echo "${i}" && return 0
+    done
+    [ "${i}" == "${#User_Name_Array[@]}" ] && echo "Error: !!! $1 not find !!!" >&2 && exit 67   
+    return 0
+}
+
+function MoveCoreDumpFiles
+{
+    local Var=""
+    local IFS_OLD="${IFS}"
+    /bin/mkdir -p "$1"
+    IFS=$'\n'
+    for Var in $2
+    do
+        if [[ "${Var}" =~ ^"${WHERE_FIND_CORE}"/\. ]]; then
+            ! /bin/mv "${Var}" "$1/coredump/${Var#${WHERE_FIND_CORE}/.}" && echo "Error: !!! /bin/mv ${Var} failed !!!" >&2
+        else
+            ! /bin/mv "${Var}" "$1/coredump" && echo "Error: !!! /bin/mv ${Var} failed !!!" >&2
+        fi
+    done
+    IFS="${IFS_OLD}"
+    return 0
+}
+
+############################################################
+##### user timeout case_exe_file file_dir file_name before_do after_do
+############################################################
+function ExeOneCaseQttest
+{
+    local exitstatu=0
+    local userindex="$(PutUserNameIndex "$1")"
+    local corefiles=""
+    
+    /bin/touch "$4/${userindex}T$5.kmsg.log" "$4/${userindex}T$5.slog.log"
+    /bin/chmod 777 "$4/${userindex}T$5.kmsg.log" "$4/${userindex}T$5.slog.log"
+    /bin/cat /dev/kmsg 1>"$4/${userindex}T$5.kmsg.log" 2>&1 &
+    local kmsgpid="$!"
+    /usr/sbin/logger 1>"$4/${userindex}T$5.slog.log" 2>&1 &
+    local slogpid="$!"
+    
+    # 在此处对代码覆盖率文件加权限
+    [ -d /data/testinfo ] && /bin/chmod -R 777 /data/testinfo/*
+    
+    case "$#" in
+        5)
+            /bin/su - "$1" -c "/bin/test_case/tools/timeout -k5 '$2' '$3' -o '$4/$5.xml,xml' -o /dev/fd/1,txt | while read -r line; do echo "'"$(date "+%Y%m%d%H%M%S%N") ${line}"; done; exit ${PIPESTATUS[0]}'
+            exitstatu=$?
+        ;;
+        6)
+            /bin/su - "$1" -c "$6; /bin/test_case/tools/timeout -k5 '$2' '$3' -o '$4/$5.xml,xml' -o /dev/fd/1,txt | while read -r line; do echo "'"$(date "+%Y%m%d%H%M%S%N") ${line}"; done; exit ${PIPESTATUS[0]}'
+            exitstatu=$?
+        ;;
+        7)
+            /bin/su - "$1" -c "$6; /bin/test_case/tools/timeout -k5 '$2' '$3' -o '$4/$5.xml,xml' -o /dev/fd/1,txt | while read -r line; do echo "'"$(date "+%Y%m%d%H%M%S%N") ${line}"; done; exitcode=${PIPESTATUS[0]}; '"$7; "'exit ${exitcode}'
+            exitstatu=$?
+        ;;
+    esac
+    
+    kill -9 "${kmsgpid}" "${slogpid}"
+    
+    corefiles="$(find "${WHERE_FIND_CORE}" -name '*core*' -type f)"
+    case "${exitstatu}" in
+        0)
+            if [ "${corefiles}" != "" ]; then
+                mv "$4/$5.xml" "$4/1T0T${userindex}T$5.xml"
+                MoveCoreDumpFiles "$4/${userindex}T$5_coredump" "${corefiles}"
+            else
+                mv "$4/$5.xml" "$4/0T0T${userindex}T$5.xml"
+            fi
+        ;;
+        124)
+            if [ "${corefiles}" != "" ]; then
+                mv "$4/$5.xml" "$4/1T1T${userindex}T$5.xml"
+                MoveCoreDumpFiles "$4/${userindex}T$5_coredump" "${corefiles}"
+            else
+                mv "$4/$5.xml" "$4/0T1T${userindex}T$5.xml"
+            fi
+            echo "Error: !!! $3: timeout !!!" >&2
+        ;;
+        137)
+            if [ "${corefiles}" != "" ]; then
+                mv "$4/$5.xml" "$4/1T1T${userindex}T$5.xml"
+                MoveCoreDumpFiles "$4/${userindex}T$5_coredump" "${corefiles}"
+            else
+                mv "$4/$5.xml" "$4/0T1T${userindex}T$5.xml"
+            fi
+            echo "Error: !!! $3: timeout !!!" >&2
+        ;;
+        [1-9]*)
+            if [ "${corefiles}" != "" ]; then
+                mv "$4/$5.xml" "$4/1T0T${userindex}T$5.xml"
+                MoveCoreDumpFiles "$4/${userindex}T$5_coredump" "${corefiles}"
+            else
+                mv "$4/$5.xml" "$4/0T0T${userindex}T$5.xml"
+            fi
+            echo "Error: !!! $3: ${exitstatu} !!!" >&2
+        ;;
+        *)
+            echo "Error: !!! $2 failed:${exitstatu} !!!" >&2 && return 1
+        ;;
+    esac
+
+    return 0
+}
+
+############################################################
+##### stype sopid MinUID MaxUID Groups
+############################################################
+function AddUserGroupAndDataDir
+{
+    local Var
+    if ! /usr/bin/id "$2" 1>/dev/null 2>&1; then
+        local uidgid=$3
+        echo "In AddUserGroupAndDataDir $2, $3" >&2
+        local alluid="$(/usr/bin/sqlite3 "${SQLITES3_USR_DB}" "SELECT UID FROM PACKAGE_UID_TABLE where TYPE=$1 ORDER by UID;")"
+        [ 0 != $? ] && echo "Error: !!! sqlite3 error !!!" >&2 && exit 66
+        for Var in ${alluid};
+        do
+            echo "Var is ${Var} and ${uidgid}"
+            [ ${Var} -ne ${uidgid} ] && echo "Error: !!! UID error in sqlite3 !!!" >&2 && exit 67
+            ((++uidgid))
+        done
+        #for Var in ${alluid};
+        #do
+        #    [ ${uidgid} -gt ${Var} ] && echo "Error: !!! UID error in sqlite3 !!!" >&2 && exit 67
+        #    [ ${uidgid} -lt ${Var} ] && break
+        #    ((++uidgid))
+        #done
+        [ ${uidgid} -gt $4 ] && echo "Error: !!! The max uid out of range !!!" >&2 && exit 68
+        
+        ! /usr/sbin/groupadd -g ${uidgid} "$2" && echo "Error: !!! groupadd error !!!" >&2 && exit 69
+        ! /usr/sbin/useradd -u${uidgid} -g"$2" -G"$5" -M -d"/data/data/$2" -s/bin/bash "$2" && echo "Error: !!! useradd error !!!" >&2 && exit 70
+        ! /usr/bin/sqlite3 "${SQLITES3_USR_DB}" "INSERT INTO PACKAGE_UID_TABLE (UID, GID, DISABLED, TYPE, PRESET, PACKAGE_NAME, PACKAGE_OWNER_NAME, PACKAGE_MD5_OWNER_NAME, PACKAGE_SHARE_USER_ID, PACKAGE_SOPID) VALUES ('${uidgid}', '${uidgid}', '1', '$1', '1', '$2', '$2', '$2', '$2', '$2')" && echo "Error: !!! sqlite3 error !!!" >&2 && exit 71
+        
+        [ -d "/data/data/$2" ] || /bin/mkdir -p "/data/data/$2"
+        /bin/chmod 770 -R "/data/data/$2"
+        ! /bin/chown -R "$2:appadmin" "/data/data/$2" && echo "Error: !!! chown error !!!" >&2 && exit 72
+    fi
+    return 0
+}
+
+function ExecutionCaseCommon
+{
+    local IFS_OLD="${IFS}"
+    local caseworkdir="$1"
+    local caseresultd="$2"
+    local caseworkusr="$3"
+    local outfilename=""
+    local caseworkbin="$(/bin/find "${caseworkdir}/bin" -name '*.out' -type f | head -n 1)"
+    local permindex=""
+    local Var1
+    local Var2
+
+    ! [ "" != "${caseworkbin}" -a -f "${caseworkdir}/bin/config.txt" ] && echo "Error: !!! ${caseworkdir} does not exist !!!" >&2 && return 1
+    eval "$(/bin/grep '^permission *= *' "${caseworkdir}/bin/config.txt" | /bin/sed 's/[[:space:]]*=[[:space:]]*\([^#]*\)/=\1 /g')"
+    eval "$(/bin/grep '^timeout *= *' "${caseworkdir}/bin/config.txt" | /bin/sed 's/[[:space:]]*=[[:space:]]*\([^#]*\)/=\1 /g')"
+    [ "" == "${timeout}" ] && timeout=10s
+    eval "$(/bin/grep '^codetype *= *' "${caseworkdir}/bin/config.txt" | /bin/sed 's/[[:space:]]*=[[:space:]]*\([^#]*\)/=\1 /g')"
+    [ "" == "${codetype}" ] && codetype=qttest
+    outfilename="_${codetype}"
+
+    case "${codetype}" in
+    qttest)
+        [ -f "${caseworkdir}/bin/root_prerun.sh" ] && "${caseworkdir}/bin/root_prerun.sh"
+        if [ "" == "${permission}" ]; then
+            ExeOneCaseQttest "${caseworkusr}" "${timeout}" "${caseworkbin}" "${caseresultd}" "${outfilename}" "unset USESPERMISSION; [ -f '${caseworkdir}/bin/normal_prerun.sh' ] && . '${caseworkdir}/bin/normal_prerun.sh'" "[ -f '${caseworkdir}/bin/normal_postrun.sh' ] && . '${caseworkdir}/bin/normal_postrun.sh'"
+        else
+            IFS=','
+            set -f
+            for Var1 in ${permission}
+            do
+                Var1="${Var1#[}"
+                Var1="${Var1%]}"
+                outfilename="_${codetype}"
+                if [ "" == "${Var1}" ]; then
+                    ExeOneCaseQttest "${caseworkusr}" "${timeout}" "${caseworkbin}" "${caseresultd}" "${outfilename}" "export USESPERMISSION=''; [ -f '${caseworkdir}/bin/normal_prerun.sh' ] && . '${caseworkdir}/bin/normal_prerun.sh'" "[ -f '${caseworkdir}/bin/normal_postrun.sh' ] && . '${caseworkdir}/bin/normal_postrun.sh'"
+                else
+                    IFS=':'
+                    for Var2 in ${Var1}
+                    do
+                        permindex="$(/usr/bin/sqlite3 "${SQLITES3_PER_DB}" "SELECT PERM_INDEX FROM PMS_GLOBAL WHERE NAME='${Var2}';")"
+                        [ 0 != $? -o "X" == "X${permindex}" ] && echo "Error: !!! sqlite3 ${SQLITES3_PER_DB} error !!!" >&2 && exit 73
+                        /usr/bin/sqlite3 "${SQLITES3_PER_DB}" "INSERT INTO PMS_SETTINGS (UID, SOPID, PERM_INDEX, ENABLED, PRIORITY) values($(/usr/bin/id -u "${caseworkusr}"), '${caseworkusr}', ${permindex}, 1, 0);"
+                        [ 0 != $? ] && echo "Error: !!! sqlite3 ${SQLITES3_PER_DB} error !!!" >&2 && exit 74
+                        outfilename="_${permindex}${outfilename}"
+                    done
+                    IFS=','
+                    echo "using permission(${Var1}) to execute ${caseworkbin}"
+                    ExeOneCaseQttest "${caseworkusr}" "${timeout}" "${caseworkbin}" "${caseresultd}" "${outfilename}" "export USESPERMISSION='${Var1}'; [ -f '${caseworkdir}/bin/normal_prerun.sh' ] && . '${caseworkdir}/bin/normal_prerun.sh'" "[ -f '${caseworkdir}/bin/normal_postrun.sh' ] && . '${caseworkdir}/bin/normal_postrun.sh'"
+                    
+                    /usr/bin/sqlite3 "${SQLITES3_PER_DB}" "DELETE FROM PMS_SETTINGS WHERE SOPID='${caseworkusr}';"
+                    [ 0 != $? ] && echo "Error: !!! sqlite3 ${SQLITES3_PER_DB} error !!!" >&2 && exit 75
+                fi
+            done
+            set +f
+            IFS="${IFS_OLD}"
+        fi
+        [ -f "${caseworkdir}/bin/root_postrun.sh" ] && "${caseworkdir}/bin/root_postrun.sh"
+    ;;
+    gtest)
+        echo "not supported: codetype=gtest"
+    ;;
+    c)
+        echo "not supported: codetype=c"
+    ;;
+    esac
+
+    /bin/rm -rf "${caseworkdir}"
+
+    return 0
+}
+
+function InstallCaseAppUser
+{
+    local casecopysrc="$1"
+    local caseinstall="$2"
+    local caseresultd="$3"
+    local caseworkusr="$4"
+    
+    /bin/cp -rf "${casecopysrc}" "${caseinstall}"
+    ! /bin/chown -R "${caseworkusr}:appadmin" "${caseinstall}" && echo "Error: !!! chown error !!!" >&2 && exit 76
+    /bin/chmod -R 570 "${caseinstall}"
+    ExecutionCaseCommon "${caseinstall}" "${caseresultd}" "${caseworkusr}"
+
+    return $?
+}
+
+function UnitCaseExecution
+{
+    local IFS_OLD="${IFS}"
+    local casecopysrc="$1"
+    local caseparents="$2"
+    local casedirname=""
+    local Var
+
+    AddUserGroupAndDataDir 1 "${User_Name_Array[0]}" "${SYS_APP_UID_MIN}" "${SYS_APP_UID_MAX}" "systemapps,userapps,audio"
+    ! [ -d "/usr/apps/${User_Name_Array[0]}" ] && /bin/mkdir -p "/usr/apps/${User_Name_Array[0]}" || /bin/rm -rf "/usr/apps/${User_Name_Array[0]}"/*
+    ! /bin/chown -R "${User_Name_Array[0]}:appadmin" "/usr/apps/${User_Name_Array[0]}" && echo "Error: !!! chown error !!!" >&2 && exit 77
+    /bin/chmod -R 570 "/usr/apps/${User_Name_Array[0]}"
+
+    AddUserGroupAndDataDir 0 "${User_Name_Array[1]}" "${USR_APP_UID_MIN}" "${USR_APP_UID_MAX}" "audio"
+    ! [ -d "/data/apps/${User_Name_Array[1]}" ] && /bin/mkdir -p "/data/apps/${User_Name_Array[1]}" || /bin/rm -rf "/data/apps/${User_Name_Array[1]}"/*
+    ! /bin/chown -R "${User_Name_Array[1]}:appadmin" "/data/apps/${User_Name_Array[1]}" && echo "Error: !!! chown error !!!" >&2 && exit 78
+    /bin/chmod -R 570 "/data/apps/${User_Name_Array[1]}"
+    
+    [ -d "${caseparents}" ] || /bin/mkdir -p "${caseparents}" && /bin/chmod -R 777 "${caseparents}"
+
+    shopt -s nullglob
+    for Var in "${casecopysrc}"/*
+    do
+        ! [ -d "${Var}" -a -f "${Var}/bin/config.txt" ] && echo "Error: !!! ${Var} does not exist !!!" >&2 && continue
+        eval "$(grep '^casetype[[:space:]]*=[[:space:]]*' "${Var}/bin/config.txt" | sed 's/[[:space:]]*=[[:space:]]*\([^#]*\)/=\1 /g')"
+        casedirname="${Var##*/}"
+        [ -d "${caseparents}/${casedirname}" ] || /bin/mkdir -p "${caseparents}/${casedirname}" && /bin/chmod -R 777 "${caseparents}/${casedirname}"
+
+        if [ "" != "${casetype}" ]; then
+            IFS=','
+            for UserName in ${casetype}
+            do
+                case "${UserName}" in
+                SystemApp)
+                    echo "using ${User_Name_Array[0]} user to execute ${casedirname}"
+                    InstallCaseAppUser "${Var}" "/usr/apps/${User_Name_Array[0]}/${casedirname}" "${caseparents}/${casedirname}" "${User_Name_Array[0]}"
+                ;;
+                UserApp)
+                    echo "using ${User_Name_Array[1]} user to execute ${casedirname}"
+                    InstallCaseAppUser "${Var}" "/data/apps/${User_Name_Array[1]}/${casedirname}" "${caseparents}/${casedirname}" "${User_Name_Array[1]}"
+                ;;
+                developer)
+                    echo "using developer user to execute ${casedirname}"
+                    ExecutionCaseCommon "${Var}" "${caseparents}/${casedirname}" "developer"
+                ;;
+                system)
+                    echo "using system user to execute ${casedirname}"
+                    /bin/chmod -R 555 "${Var}"
+                    ExecutionCaseCommon "${Var}" "${caseparents}/${casedirname}" "system"
+                ;;
+                esac
+            done
+            IFS="${IFS_OLD}"
+        fi
+    done
+
+    /bin/rm -rf "${casecopysrc}"
+    /bin/rm -rf "/usr/apps/${User_Name_Array[0]}"
+    /bin/rm -rf "/data/apps/${User_Name_Array[1]}"
+
+    return 0
+}
+
+function Main
+{
+    local filename="${0##*/}"
+    [ $# != 2 ] && echo "Error: !!! Parameter error !!!" >&2 && exit 65
+    InitializeGlobalVariables
+    /bin/mkdir -p "$2/${filename}"
+    PutUserNamePermissionIndex "$2/${filename}"
+    UnitCaseExecution "$1/${filename}" "$2/${filename}"
+    return 0
+}
+
+Main "$@"

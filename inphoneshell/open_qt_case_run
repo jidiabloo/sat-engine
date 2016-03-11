@@ -1,0 +1,196 @@
+#!/bin/bash
+
+function InitializeGlobalVariables
+{
+    SYS_APP_UID_MIN=20002
+    SYS_APP_UID_MAX=30000
+    USR_APP_UID_MIN=40001
+    USR_APP_UID_MAX=65535
+    SQLITES3_USR_DB="/data/install/policy_governor/policy-governor.db"
+    SQLITES3_PER_DB="/data/systemservice/permadmin/local_permission.db"
+    WHERE_FIND_CORE="/data/home/user/coredump"
+    
+    # 下面两个组做修改需要改脚本中使用的地方
+    User_Tpye_Array=( 'sysapp'                     'userapp'                    'root' 'system' 'developer' )
+    User_Name_Array=( 'syberos.ceshi.unittest.sys' 'syberos.ceshi.unittest.usr' 'root' 'system' 'developer' )
+    
+    return 0
+}
+
+############################################################
+##### case_result_root_dir
+############################################################
+function PutUserNamePermissionIndex
+{
+    local ArrayIndex=${#User_Tpye_Array[@]}
+    rm -rf "$1/usertypemap.txt"
+    for ((i = 0; i < ${ArrayIndex}; ++i))
+    do
+        echo "${i}|${User_Tpye_Array[${i}]}" >> "$1/usertypemap.txt"
+    done
+
+    /usr/bin/sqlite3 "${SQLITES3_PER_DB}" 'SELECT PERM_INDEX, NAME FROM PMS_GLOBAL ORDER by PERM_INDEX;' > "$1/permissionmap.txt"
+    [ 0 != $? ] && echo "Error: !!! sqlite3 error !!!" >&2 && exit 66
+
+    return 0
+}
+
+############################################################
+##### user
+############################################################
+function PutUserNameIndex
+{
+    for ((i = 0; i < ${#User_Name_Array[@]}; ++i))
+    do
+        [ "${User_Name_Array[${i}]}" == "$1" ] && echo "${i}" && return 0
+    done
+    [ "${i}" == "${#User_Name_Array[@]}" ] && echo "Error: !!! $1 not find !!!" >&2 && exit 67   
+    return 0
+}
+
+function MoveCoreDumpFiles
+{
+    local Var=""
+    local IFS_OLD="${IFS}"
+    /bin/mkdir -p "$1"
+    IFS=$'\n'
+    for Var in $2
+    do
+        if [[ "${Var}" =~ ^"${WHERE_FIND_CORE}"/\. ]]; then
+            ! /bin/mv "${Var}" "$1/coredump/${Var#${WHERE_FIND_CORE}/.}" && echo "Error: !!! /bin/mv ${Var} failed !!!" >&2
+        else
+            ! /bin/mv "${Var}" "$1/coredump" && echo "Error: !!! /bin/mv ${Var} failed !!!" >&2
+        fi
+    done
+    IFS="${IFS_OLD}"
+    return 0
+}
+
+############################################################
+##### user timeout case_exe_file file_dir file_name before_do after_do
+############################################################
+function ExeOneCaseQttest
+{
+    local exitstatu=0
+    local userindex="$(PutUserNameIndex "$1")"
+    local corefiles=""
+    
+    /bin/touch "$4/${userindex}T$5.kmsg.log" "$4/${userindex}T$5.slog.log"
+    /bin/chmod 777 "$4/${userindex}T$5.kmsg.log" "$4/${userindex}T$5.slog.log"
+    /bin/cat /dev/kmsg 1>"$4/${userindex}T$5.kmsg.log" 2>&1 &
+    local kmsgpid="$!"
+    /usr/sbin/logger 1>"$4/${userindex}T$5.slog.log" 2>&1 &
+    local slogpid="$!"
+    
+    # 在此处对代码覆盖率文件加权限
+    [ -d /data/testinfo ] && /bin/chmod -R 777 /data/testinfo/*
+    
+    case "$#" in
+        5)
+            /bin/su - "$1" -c "/bin/test_case/tools/timeout -k5 '$2' '$3' -o '$4/$5.xml,xml' -o /dev/fd/1,txt | while read -r line; do echo "'"$(date "+%Y%m%d%H%M%S%N") ${line}"; done; exit ${PIPESTATUS[0]}'
+            exitstatu=$?
+        ;;
+        6)
+            /bin/su - "$1" -c "$6; /bin/test_case/tools/timeout -k5 '$2' '$3' -o '$4/$5.xml,xml' -o /dev/fd/1,txt | while read -r line; do echo "'"$(date "+%Y%m%d%H%M%S%N") ${line}"; done; exit ${PIPESTATUS[0]}'
+            exitstatu=$?
+        ;;
+        7)
+            /bin/su - "$1" -c "$6; /bin/test_case/tools/timeout -k5 '$2' '$3' -o '$4/$5.xml,xml' -o /dev/fd/1,txt | while read -r line; do echo "'"$(date "+%Y%m%d%H%M%S%N") ${line}"; done; exitcode=${PIPESTATUS[0]}; '"$7; "'exit ${exitcode}'
+            exitstatu=$?
+        ;;
+    esac
+    
+    kill -9 "${kmsgpid}" "${slogpid}"
+    
+    corefiles="$(find "${WHERE_FIND_CORE}" -name '*core*' -type f)"
+    case "${exitstatu}" in
+        0)
+            if [ "${corefiles}" != "" ]; then
+                mv "$4/$5.xml" "$4/1T0T${userindex}T$5.xml"
+                MoveCoreDumpFiles "$4/${userindex}T$5_coredump" "${corefiles}"
+            else
+                mv "$4/$5.xml" "$4/0T0T${userindex}T$5.xml"
+            fi
+        ;;
+        124)
+            if [ "${corefiles}" != "" ]; then
+                mv "$4/$5.xml" "$4/1T1T${userindex}T$5.xml"
+                MoveCoreDumpFiles "$4/${userindex}T$5_coredump" "${corefiles}"
+            else
+                mv "$4/$5.xml" "$4/0T1T${userindex}T$5.xml"
+            fi
+            echo "Error: !!! $3: timeout !!!" >&2
+        ;;
+        137)
+            if [ "${corefiles}" != "" ]; then
+                mv "$4/$5.xml" "$4/1T1T${userindex}T$5.xml"
+                MoveCoreDumpFiles "$4/${userindex}T$5_coredump" "${corefiles}"
+            else
+                mv "$4/$5.xml" "$4/0T1T${userindex}T$5.xml"
+            fi
+            echo "Error: !!! $3: timeout !!!" >&2
+        ;;
+        [1-9]*)
+            if [ "${corefiles}" != "" ]; then
+                mv "$4/$5.xml" "$4/1T0T${userindex}T$5.xml"
+                MoveCoreDumpFiles "$4/${userindex}T$5_coredump" "${corefiles}"
+            else
+                mv "$4/$5.xml" "$4/0T0T${userindex}T$5.xml"
+            fi
+            echo "Error: !!! $3: ${exitstatu} !!!" >&2
+        ;;
+        *)
+            echo "Error: !!! $2 failed:${exitstatu} !!!" >&2 && return 1
+        ;;
+    esac
+
+    return 0
+}
+
+function OpenQtCaseExecution
+{
+    local IFS_OLD="${IFS}"
+    local caseworkdir="$1"
+    local caseparents="$2"
+    local caseresultd=""
+    local Var=""
+
+    ! [ -d "${caseworkdir}" ] && return 0
+    [ -d "${caseparents}" ] || /bin/mkdir -p "${caseparents}" && /bin/chmod -R 777 "${caseparents}"
+
+    IFS=$'\n'
+    for Var in $(/bin/find "${caseworkdir}" -type f)
+    do
+        ! [ -x "${Var}" ] && continue
+        caseresultd="$caseparents/${Var##*/}"
+        if [ -d "${caseresultd}" ]; then
+            for ((i = 0; i < 100; ++i))
+            do
+                ! [ -d "${caseresultd}${i}" ] && caseresultd="${caseresultd}${i}" && break
+            done
+            [ "${i}" == 100 ] && echo "Error: !!! Too many duplicate files: ${Var##*/}" >&2 && continue
+        fi
+        /bin/mkdir -p "${caseresultd}"
+        /bin/chmod -R 777 "${caseresultd}"
+
+        echo "using ${User_Name_Array[3]} user to execute ${Var}"
+        ExeOneCaseQttest "${User_Name_Array[3]}" '10s' "${Var}" "${caseresultd}" ''
+    done
+    IFS="${IFS_OLD}"
+    /bin/rm -rf "${caseworkdir}"
+
+    return 0
+}
+
+function Main
+{
+    local filename="${0##*/}"
+    [ $# != 2 ] && echo "Error: !!! Parameter error !!!" >&2 && exit 65
+    InitializeGlobalVariables
+    /bin/mkdir -p "$2/${filename}"
+    PutUserNamePermissionIndex "$2/${filename}"
+    OpenQtCaseExecution "$1/${filename}" "$2/${filename}"
+    return 0
+}
+
+Main "$@"
