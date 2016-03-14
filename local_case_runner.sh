@@ -26,16 +26,30 @@ function prepare_env
 function extract_test_case
 {
     ##the new workspace
-    tzipworkdir = "$SAT_HOST_PACKAGEING_PATH/cases"
+    tzipworkdir="$SAT_HOST_PACKAGEING_PATH/cases"
     #after the extraction, we move the case to here
     #tzipworkdir="${DirsName}/testspace/${SAT_TEST_ROOT}/${TestCaseDir}/unit-case"
 
-    local local_folder="/home/xji/Downloads/framework-test"
+    local local_folder="/home/xji/Misc/sat-engine/tests/res"
     local rpm_workspace="${DirsName}/testrpmwork/unit-case"
 
     #Create new rpm workspace if it is not exist
-    ! [ -d "${rpm_workspace}" ] && mkdir -p "${rpm_workspace}" 
-    ! [ -d "${tzipworkdir}" ] && mkdir -p "${tzipworkdir}" 
+    if [ -d "${rpm_workspace}" ]; then
+	cd "${rpm_workspace}" && rm -rf ./*
+    else
+	mkdir -p "${rpm_workspace}"
+    fi
+    
+    if [ -d "${tzipworkdir}" ]; then
+	cd "${tzipworkdir}" && rm -rf ./*
+    else
+	mkdir -p "${tzipworkdir}"
+    fi
+
+    
+    #Create new rpm workspace if it is not exist
+    #! [ -d "${rpm_workspace}" ] && mkdir -p "${rpm_workspace}" 
+    #! [ -d "${tzipworkdir}" ] && mkdir -p "${tzipworkdir}" 
 
     #Get all test rpm from folder
     local filelist=`ls "$local_folder"/*-tests-[0-9]*.armv7tnhl.rpm`
@@ -45,18 +59,20 @@ function extract_test_case
 	do
 	    PutTtyInfo "The rpm test file: ${filelist[$i]} will be extracted "
 	    ! [ -f "${filelist[$i]}" ] && CerrInfo "Error: the rpm package: $filelist[$i] is not qualify ! " || cp "${filelist[$i]}" "${rpm_workspace}"
-	    
 	    cd "${rpm_workspace}" && rpm2cpio "${filelist[$i]##/*/}" | cpio -div 1>/dev/null 2>&1 | [ $? != 0 ] && CerrInfo "Error: Failed to extract test rpm package! : " && exit 170
+
+	    echo " !!!!!!!! $?"
 	    
 	done
-    ) || exit $?
-    
+    ) 
+
+    echo "the extraction has been done, do the moving"
 
     #Contain the list of all the executable test case
     local bin_list=()
 
     #Get all executable binary from extracted rpm
-    bin_list=(`find -name "*_syberos.out"`)
+    bin_list=(`find ${rpm_workspace} -name "*_syberos.out"`)
 
     if [ $? != 0 ]; then
 	CerrInfo "Error: problem occured duing extract test case ! "
@@ -80,9 +96,8 @@ function extract_test_case
     (
 	# Change dir to "${DirsName}/testcasedir"
 	cd "${tzipworkdir}"
-	find -name "*"
-        #tar -cvzf cases.tar.gz ./tools/* 1>/dev/null
-
+        ls
+	#tar -cvzf cases.tar.gz ./cases/* 1>/dev/null
     )
 
     #TODO: Scp the new tar file to target device
@@ -110,10 +125,10 @@ function Test
     #check_qt5_test
     
     #Extract the test case and copy them to case folder
-    extract_test_case
+    #extract_test_case
     
     #Upload the tools needed by exeuting case in target device
-    #upload_tools "device1"
+    upload_tools "device1"
 
     #run_case
     

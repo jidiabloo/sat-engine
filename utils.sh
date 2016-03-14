@@ -2,6 +2,7 @@
 
 . ./device_profile.sh
 . ./log.sh
+. ./error_code.sh
 
 #map the device profile so that we can use the universal device profile
 init_device_profile "192.168.100.100" "developer" "system" "root" "system" "device1"
@@ -21,14 +22,67 @@ else
     TerminalBool=0
 fi
 
+
+function check_tools_installed
+{
+    ErrorCode=63
+    ! [ -f "/usr/bin/expect" ] && CerrInfo "please install expect" && exit ${ErrorCode} || ((--ErrorCode))
+    ! [ -f "/usr/bin/sshpass" ] && CerrInfo "please install sshpass" && exit ${ErrorCode} || ((--ErrorCode))
+    return 0
+}
+
+
+function clean_known_hosts
+{
+    [ $# != 1 ] && echo "Error: the amount of parameter is not correct !"
+
+    PhoneAddr=$1
+    ssh-keygen -f "${HOME}/.ssh/known_hosts" -R ${PhoneAddr}
+
+    [ $? != 0 ] && echo "Error: problem during clean all the know_hosts"
+}
+
+function ssh_exec
+{
+    [ $# != 1 ] && echo "Error: the amount of parameter is not correct !"
+    
+    instruction=$1
+    sshpass -p "${SYBEROS_LOGIN_PASSWD}" ssh -o StrictHostKeyChecking=no "${SYBEROS_LOGIN_USER}@${SYBEROS_PHONE_ADDR}" "$instruction"
+    if [ $? != 0 ];then 
+	CerrInfo "Error: ssh execution failed !!"
+	exit SSH_EXEC_FAILED
+    fi
+    
+}
+
 function ssh_copy
 {
-    [ $# != 2 ] && echo "Error: the amount of parameter is not correct !"    
-    source_filepath=$1
+    
+    [ $# != 2 ] && echo "Error: the amount of parameter is not correct !"
+    
+    source=$1
+    dist=$2
+    echo "SSSSSSSSSSSSSSSSSSSS : $source"
+    echo "SSSSSSSSSSSSSSSSSSSS : $dist"
+    sshpass -p "${SYBEROS_LOGIN_PASSWD}" scp -r -o StrictHostKeyChecking=no "$source" "${SYBEROS_LOGIN_USER}@${SYBEROS_PHONE_ADDR}:$dist"
 
-    [ $# != 1 ] && echo "Error: the amount of parameter is not correct !"
-    local device_name=$1
+    if [ $? != 0 ];then 
+	CerrInfo "Error: ssh copy failed !!"
+	exit SSH_COPY_FAILED
+    fi
+}
 
+function init_device_env
+{
+    ssh_exec "mkdir -p ${SAT_DEVICE_TEST_ROOT} && rm -rf ${SAT_DEVICE_TEST_ROOT}/tools.tar.gz"
+}
+
+######################################################################
+##### Package and upload tools to the target device
+######################################################################
+
+function upload_tools
+{
     echo "tar file Name : $SAT_HOST_TAR_PATH ${SAT_TEST_ROOT}"
     
     #Name of directory in SAT_HOST_PACKAGEING_PATH, which is for containing result
@@ -41,11 +95,7 @@ function ssh_copy
     ##link all the tools to new folder
     ls ${DirsName}/tools/* | xargs -I xxx ln xxx "${SAT_HOST_PACKAGEING_PATH}/tools"
     ls ${DirsName}/inphoneshell/* | xargs -I xxx ln xxx "${SAT_HOST_PACKAGEING_PATH}/tools"
-
-    #link three tool to tar ball
-    #rm -rf "${SAT_HOST_PACKAGEING_PATH}/install_init.sh" && ln "${DirsName}/inphoneshell/install_init.sh" "${SAT_HOST_PACKAGEING_PATH}"
-    #rm -rf "${SAT_HOST_PACKAGEING_PATH}/install_run.sh" && ln "${DirsName}/inphoneshell/install_run.sh" "${SAT_HOST_PACKAGEING_PATH}"
-    #rm -rf "${SAT_HOST_PACKAGEING_PATH}/install_destroy.sh" && ln "${DirsName}/inphoneshell/install_destroy.sh" "${SAT_HOST_PACKAGEING_PATH}"    
+    
     (
 	# Change dir to "${DirsName}/testcasedir"
 	cd "$SAT_HOST_PACKAGEING_PATH"
@@ -70,9 +120,10 @@ function ssh_copy
     #ssh_exec "mkdir -p ${SAT_DEVICE_TEST_ROOT} && rm -rf ${SAT_DEVICE_TEST_ROOT}/tools.tar.gz" && [ $? != 0 ] && exit 110
     
     init_device_env
-
+    echo "!!!!!!!!!!! ${SAT_HOST_PACKAGEING_PATH}"
+    echo "!!!!!!!!!!! ${SAT_DEVICE_TEST_ROOT}"
     ##Scp the new tar file to target device
-    ssh_copy "${SAT_HOST_PACKAGEING_PATH}/tools.tar.gz" "${SAT_DEVICE_TEST_ROOT}" && [ $? != 0 ] && exit 109 
+    ssh_copy "${SAT_HOST_PACKAGEING_PATH}/tools.tar.gz" "${SAT_DEVICE_TEST_ROOT}" 
     
     ##Extract the tools to the specific location
     phoneroot_exec "cd ${SAT_DEVICE_TEST_ROOT} && tar -xvzf tools.tar.gz  1>/dev/null 2>&1 && rm -rf tools.tar.gz && rm -rf ${SAT_DEVICE_TOOL_PATH} && mkdir -p ${SAT_DEVICE_TOOL_PATH} && cp ${SAT_DEVICE_TEST_ROOT}/tools/* /bin/test_case/tools && rm -rf ${SAT_DEVICE_TEST_ROOT}/tools && chmod 4755 /bin/test_case/tools/su_testcase;"' returncode=$?; exit ${returncode}' > /dev/tty
@@ -96,16 +147,24 @@ function CheckAssistantTool
     return 0
 }
 
+
+
+
 function phoneroot_exec
 {
    instruction="$1"
     
     "${DirsName}"/phonerootexe.exp "${SYBEROS_LOGIN_USER}@${SYBEROS_PHONE_ADDR}" "${SYBEROS_LOGIN_PASSWD}" "${SYBEROS_EXEC_USER}" "${SYBEROS_EXEC_PASSWD}" "${instruction}" > /dev/tty
+
+    
     
 }
 
+
+
 function Test
 {
+    
     phoneroot_exec "ls"
 
     #upload_tools
