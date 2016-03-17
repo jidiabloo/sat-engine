@@ -23,11 +23,19 @@ else
 fi
 
 
+
+
 function check_tools_installed
 {
     ErrorCode=63
+    ! [ -f "/usr/bin/gawk" ] && CerrInfo "please install gawk" && exit ${ErrorCode} || ((--ErrorCode))
+    ! [ -f "/usr/bin/wget" ] && CerrInfo "please install wget" && exit ${ErrorCode} || ((--ErrorCode))
     ! [ -f "/usr/bin/expect" ] && CerrInfo "please install expect" && exit ${ErrorCode} || ((--ErrorCode))
     ! [ -f "/usr/bin/sshpass" ] && CerrInfo "please install sshpass" && exit ${ErrorCode} || ((--ErrorCode))
+    ! [ -f "/bin/cpio" ] && CerrInfo "please install cpio" && exit ${ErrorCode} || ((--ErrorCode))
+    ! [ -f "/usr/bin/rpm2cpio" ] && CerrInfo "please install rpm2cpio" && exit ${ErrorCode} || ((--ErrorCode))
+    ! [ -f "/usr/bin/xsltproc" ] && CerrInfo "please install xsltproc" && exit ${ErrorCode} || ((--ErrorCode))
+
     return 0
 }
 
@@ -50,7 +58,7 @@ function ssh_exec
     sshpass -p "${SYBEROS_LOGIN_PASSWD}" ssh -o StrictHostKeyChecking=no "${SYBEROS_LOGIN_USER}@${SYBEROS_PHONE_ADDR}" "$instruction"
     if [ $? != 0 ];then 
 	CerrInfo "Error: ssh execution failed !!"
-	exit SSH_EXEC_FAILED
+	exit $SSH_EXEC_FAILED
     fi
     
 }
@@ -62,13 +70,12 @@ function ssh_copy
     
     source=$1
     dist=$2
-    echo "SSSSSSSSSSSSSSSSSSSS : $source"
-    echo "SSSSSSSSSSSSSSSSSSSS : $dist"
+    
     sshpass -p "${SYBEROS_LOGIN_PASSWD}" scp -r -o StrictHostKeyChecking=no "$source" "${SYBEROS_LOGIN_USER}@${SYBEROS_PHONE_ADDR}:$dist"
 
     if [ $? != 0 ];then 
 	CerrInfo "Error: ssh copy failed !!"
-	exit SSH_COPY_FAILED
+	exit $SSH_COPY_FAILED
     fi
 }
 
@@ -84,12 +91,13 @@ function init_device_env
 function upload_tools
 {
     echo "tar file Name : $SAT_HOST_TAR_PATH ${SAT_TEST_ROOT}"
+    #Check that if the tools has been installed into the host matchine
+    check_tools_installed
     
     #Name of directory in SAT_HOST_PACKAGEING_PATH, which is for containing result
     local d_case_result="test_case_result"
-    
 
-    PutTtyInfo "Started to upload the tools to target device!"
+    PutTtyInfo "Start to upload the tools to target device!"
     #create a tool folder, link tools to tar ball
     mkdir -p "${SAT_HOST_PACKAGEING_PATH}/tools"
     ##link all the tools to new folder
@@ -101,7 +109,7 @@ function upload_tools
 	cd "$SAT_HOST_PACKAGEING_PATH"
         tar -cvzf tools.tar.gz ./tools/* 1>/dev/null
 
-	echo "22222222 $?"
+	
     )
     
     if [ $? != 0 ]; then
@@ -126,38 +134,21 @@ function upload_tools
     ssh_copy "${SAT_HOST_PACKAGEING_PATH}/tools.tar.gz" "${SAT_DEVICE_TEST_ROOT}" 
     
     ##Extract the tools to the specific location
-    phoneroot_exec "cd ${SAT_DEVICE_TEST_ROOT} && tar -xvzf tools.tar.gz  1>/dev/null 2>&1 && rm -rf tools.tar.gz && rm -rf ${SAT_DEVICE_TOOL_PATH} && mkdir -p ${SAT_DEVICE_TOOL_PATH} && cp ${SAT_DEVICE_TEST_ROOT}/tools/* /bin/test_case/tools && rm -rf ${SAT_DEVICE_TEST_ROOT}/tools && chmod 4755 /bin/test_case/tools/su_testcase;"' returncode=$?; exit ${returncode}' > /dev/tty
+    phoneroot_exec "cd ${SAT_DEVICE_TEST_ROOT} && tar -xvzf tools.tar.gz  1>/dev/null 2>&1 && rm -rf tools.tar.gz && rm -rf ${SAT_DEVICE_TOOL_PATH} && mkdir -p ${SAT_DEVICE_TOOL_PATH} && cp ${SAT_DEVICE_TEST_ROOT}/tools/* ${SAT_DEVICE_TOOL_PATH} && rm -rf ${SAT_DEVICE_TEST_ROOT}/tools && chmod 4755 /bin/test_case/tools/su_testcase;"' returncode=$?; exit ${returncode}' > /dev/tty
 
     PutTtyInfo "upload tools to phone ----------OK"    
 }
 
 
-
-function CheckAssistantTool
-{
-    ErrorCode=63
-    ! [ -f "/usr/bin/gawk" ] && CerrInfo "please install gawk" && exit ${ErrorCode} || ((--ErrorCode))
-    ! [ -f "/usr/bin/wget" ] && CerrInfo "please install wget" && exit ${ErrorCode} || ((--ErrorCode))
-    ! [ -f "/usr/bin/expect" ] && CerrInfo "please install expect" && exit ${ErrorCode} || ((--ErrorCode))
-    ! [ -f "/usr/bin/sshpass" ] && CerrInfo "please install sshpass" && exit ${ErrorCode} || ((--ErrorCode))
-    ! [ -f "/bin/cpio" ] && CerrInfo "please install cpio" && exit ${ErrorCode} || ((--ErrorCode))
-    ! [ -f "/usr/bin/rpm2cpio" ] && CerrInfo "please install rpm2cpio" && exit ${ErrorCode} || ((--ErrorCode))
-    ! [ -f "/usr/bin/xsltproc" ] && CerrInfo "please install xsltproc" && exit ${ErrorCode} || ((--ErrorCode))
-
-    return 0
-}
-
-
-
-
 function phoneroot_exec
 {
    instruction="$1"
-    
-    "${DirsName}"/phonerootexe.exp "${SYBEROS_LOGIN_USER}@${SYBEROS_PHONE_ADDR}" "${SYBEROS_LOGIN_PASSWD}" "${SYBEROS_EXEC_USER}" "${SYBEROS_EXEC_PASSWD}" "${instruction}" > /dev/tty
+   echo "phoneroot_exec instruction: $1"
 
-    
-    
+   "${DirsName}"/phonerootexe.exp "${SYBEROS_LOGIN_USER}@${SYBEROS_PHONE_ADDR}" "${SYBEROS_LOGIN_PASSWD}" "${SYBEROS_EXEC_USER}" "${SYBEROS_EXEC_PASSWD}" "${instruction}" 3600    
+
+   returncode=$?
+    [ ${returncode} != 0 ] && CerrInfo "failed to do phoneroot_exec() : ${returncode}" && exit $PHONE_ROOT_EXEC_FAILED
 }
 
 

@@ -1,0 +1,148 @@
+#!/bin/bash
+
+function InitializeGlobalVariables
+{
+    SYS_APP_UID_MIN=20002
+    SYS_APP_UID_MAX=30000
+    USR_APP_UID_MIN=40000
+    USR_APP_UID_MAX=65535
+    SQLITES3_USR_DB="/data/install/policy_governor/policy-governor.db"
+    SQLITES3_PER_DB="/data/systemservice/permadmin/local_permission.db"
+    WHERE_FIND_CORE="/data/home/user/coredump"
+    
+    # The user type currently supported
+    User_Tpye_Array=( 'sysapp'                     'userapp'                    'root' 'system' 'developer' )
+    # Define different user name for test case exectution
+    User_Name_Array=( 'syberos.ceshi.unittest.sys' 'syberos.ceshi.unittest.usr' 'root' 'system' 'developer' )
+    
+    return 0
+}
+
+############################################################
+##### return the user name index
+############################################################
+function PutUserNameIndex
+{
+    for ((i = 0; i < ${#User_Name_Array[@]}; ++i))
+    do
+        [ "${User_Name_Array[${i}]}" == "$1" ] && echo "${i}" && return 0
+    done
+    [ "${i}" == "${#User_Name_Array[@]}" ] && echo "Error: !!! $1 not find !!!" >&2 && exit 67   
+    return 0
+}
+
+
+function ExecPureCCase
+{
+    #TODO: parameter checking
+    
+
+    [ $# != 5 ] && echo "!!!@@@ Error: !!! Parameter error !!!" >&2 && exit 65
+
+    local exitstatu=0
+    #The user index is used for file naming
+    local userindex="$(PutUserNameIndex "$1")"
+
+    echo "@@@@@@@@@@@!!!!!!!:  $userindex"
+    #All the core dump files
+    local corefiles=""
+
+    ##initialize variety of the logging so that we can get the casue if there are any unexpected result got from test case
+    /bin/touch "$4/${userindex}T$5.kmsg.log" "$4/${userindex}T$5.slog.log"
+    /bin/chmod 777 "$4/${userindex}T$5.kmsg.log" "$4/${userindex}T$5.slog.log"
+    /bin/cat /dev/kmsg 1>"$4/${userindex}T$5.kmsg.log" 2>&1 &
+    local kmsgpid="$!"
+    /usr/sbin/logger 1>"$4/${userindex}T$5.slog.log" 2>&1 &
+    local slogpid="$!"
+    
+    # This is for recording the coverage information
+    #[ -d /data/testinfo ] && /bin/chmod -R 777 /data/testinfo/*
+    
+    #./c_case_run 2>&1 | while IFS= read -r line; do printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S:%N')" "$line"; done;
+
+    #Execute the test case
+    #/bin/su - "$1" -c "/bin/test_case/tools/timeout -k5 '$2' '$3' | while read -r line; do echo "'"$(date "+%Y%m%d%H%M%S%N") ${line}"; done; exit ${PIPESTATUS[0]}'
+    
+    echo "start to execute  !!!!!  $2 $3 $4"
+    
+    /bin/su - "$1" -c "/bin/test_case/tools/exec_timeout '$2' '$3' '$4/test_log'"
+    echo "finish the execute  !!!!! "
+
+    #/bin/su - "$1" -c "/bin/test_case/tools/timeout -k5 '$2' '$3' | while read -r line; do echo ${line} >> $4/test_log ; echo ${line}"; done ; exit ${PIPESTATUS[0]}'
+    exitstatu=$?
+}
+
+############################################################
+##### this function will do the following steps:
+##### 1) create case parent work dir
+##### 2) generate the result folder
+##### 2) generate the result folder
+############################################################
+
+function ExecTestCase
+{
+    local IFS_OLD="${IFS}"
+    local caseworkdir="$1"
+    local caseparents="$2"
+    local caseresultd=""
+    local Var=""
+
+    ! [ -d "${caseworkdir}" ] && return 0
+    [ -d "${caseparents}" ] || /bin/mkdir -p "${caseparents}" && /bin/chmod -R 777 "${caseparents}"
+
+    echo "@@@@@@@@@@@!!!!!!!:  case work dir : ${caseworkdir}"
+
+    IFS=$'\n'
+    
+    case_name=`/bin/find "${caseworkdir}" -name "syberos_test.sh"`
+    if [ -f "$case_name" ]
+    then
+	echo "@@@@@@@@@@@!!!!!!!:  got a test case runner: $case_name"
+	caseresultd="$caseparents/${Var##*/}"
+	echo "@@@@@@@@@@@!!!!!!!:  case result dir: $caseresultd"
+	if [ -d "${caseresultd}" ]; then
+            for ((i = 0; i < 100; ++i))
+            do
+		#find a number named file from current case result folder
+                ! [ -d "${caseresultd}${i}" ] && caseresultd="${caseresultd}${i}" && break
+            done
+            [ "${i}" == 100 ] && echo "Error: !!! Too many duplicate files: ${Var##*/}" >&2 && continue
+        fi
+
+	# create the case result folder
+        /bin/mkdir -p "${caseresultd}"
+        /bin/chmod -R 777 "${caseresultd}"
+	echo "the result folder will be used : ${caseresultd}"
+        echo "using ${User_Name_Array[3]} user to execute ${Var}"
+	
+	ExecPureCCase "${User_Name_Array[3]}" '10s' "${case_name}" "${caseresultd}" "c_case_run"
+    fi
+
+    IFS="${IFS_OLD}"
+    echo "@@@@@@@@@@@!!!!!!!:  creating the case result dir: $caseresultd"
+    /bin/rm -rf "${caseworkdir}"
+
+    return 0
+}
+
+function Main
+{
+    echo "@@@@@@@@@@@!!!!!!!:  Main get start $# ${1} ${2} ${3}"
+
+    local filename="${0##*/}"
+    
+    [ $# != 2 ] && echo "Error: !! Parameter error !!!" >&2 && exit 65
+    
+    InitializeGlobalVariables
+
+    echo "@@@@@@@@@@@!!!!!!!:  Create result folder: $2/${filename}"
+    
+    /bin/mkdir -p "$2/${filename}"
+    #PutUserNamePermissionIndex "$2/${filename}"
+    
+    #Put the case dir and the parent folder of which as parameter
+    ExecTestCase "$1/${filename}" "$2/${filename}" 
+    return 0
+}
+
+Main "$@"

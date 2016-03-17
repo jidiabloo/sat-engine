@@ -1,0 +1,6 @@
+[general]
+casetype = system                               # 执行用例的用户类型
+
+permission = []                                 # 执行用例的用户敏感权限组合
+
+timeout = 3s                                    # 用例执行的超时时间

@@ -12,12 +12,12 @@ DirsName="$([ "." != "$(dirname "$0")" ] && (cd $(dirname "$0") && pwd -P) || ([
 function init_common_profile
 {
     
-    export SAT_TEST_ROOT="tst_test"
+    export SAT_TEST_ROOT="syberos_test"
     export SAT_TEST_DIR="bin"
     
     #Path on device
     export SAT_DEVICE_TEST_ROOT="~${SYBEROS_LOGIN_USER}/${SAT_TEST_ROOT}"
-    export SAT_DEVICE_TAR_PATH="~${SYBEROS_LOGIN_USER}/${SAT_TEST_ROOT}.tar.gz"
+    export SAT_DEVICE_TAR_PATH="~${SYBEROS_LOGIN_USER}/${SAT_TEST_ROOT}/cases.tar.gz"
     export SAT_DEVICE_CASE_PATH="${SAT_DEVICE_TEST_ROOT}/bin"
     export SAT_DEVICE_TOOL_PATH="/bin/test_case/tools"
     export SAT_DEVICE_RESULT_PATH="${SAT_DEVICE_TEST_ROOT}/case_result"

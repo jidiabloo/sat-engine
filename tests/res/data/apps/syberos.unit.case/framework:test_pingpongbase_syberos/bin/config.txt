@@ -1,0 +1,5 @@
+[general]
+casetype = system                               # 执行用例的用户类型
+
+
+
